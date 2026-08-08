@@ -61,6 +61,13 @@ def detect_platform(url: str) -> str:
     return "unknown"
 
 
+# X's "syndication" API is the one most bot-download tools default to, but it's
+# frequently rate-limited or blocked from datacenter/cloud IPs (like Render's).
+# Trying graphql first, with syndication as a fallback, is noticeably more
+# reliable when the extractor is running on a hosted server rather than a home IP.
+TWITTER_EXTRACTOR_ARGS = {"twitter": {"api": ["graphql", "syndication", "legacy"]}}
+
+
 def pick_formats(info: dict) -> list:
     """Reduce yt-dlp's raw format list to a clean, deduped quality ladder."""
     raw = info.get("formats") or []
@@ -108,6 +115,7 @@ def extract(url: str = Query(...)):
         "no_warnings": True,
         "skip_download": True,
         "noplaylist": True,
+        "extractor_args": TWITTER_EXTRACTOR_ARGS if platform == "twitter" else {},
     }
 
     try:
@@ -119,9 +127,9 @@ def extract(url: str = Query(...)):
         log_event("extraction", status="failed", reason=reason, detail=msg[:300])
         friendly = {
             "private_or_login_required": "This post is private or requires login — can't be accessed without the owner's credentials.",
-            "extraction_failed": "Couldn't extract media from that link. It may be deleted, region-locked, or an unsupported post type.",
+            "extraction_failed": "Couldn't extract media from that link. It may be deleted, region-locked, rate-limited, or an unsupported post type.",
         }[reason]
-        raise HTTPException(422, friendly)
+        raise HTTPException(422, f"{friendly} (yt-dlp: {msg[:150]})")
 
     if info.get("_type") == "playlist" and info.get("entries"):
         info = info["entries"][0]  # carousels: first item for now
@@ -172,6 +180,7 @@ def download(url: str = Query(...), format_id: Optional[str] = Query(None)):
         "outtmpl": outtmpl,
         "format": (f"{format_id}+bestaudio/best" if format_id else "best"),
         "merge_output_format": "mp4",
+        "extractor_args": TWITTER_EXTRACTOR_ARGS if platform == "twitter" else {},
     }
 
     log_event("download", status="started", job=job_id, platform=platform, format_id=format_id)
